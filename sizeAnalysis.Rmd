@@ -29,6 +29,7 @@ library(data.table)
 library(rlang)
 library(tidyfast)
 library(knitr)
+library(ggridges)
 ```
 
 If newData, then will load raw files, parse, filter and save as 'dat'
@@ -110,27 +111,64 @@ if(!newData){
 }
 ```
 
+```{r theme_publication}
+
+theme_publication <- function(base_size=14, base_family="") {
+  library(grid)
+  library(ggthemes)
+  (theme_foundation(base_size=base_size, base_family=base_family)
+    + theme(plot.title = element_text(face = "bold",
+                                      size = rel(1.2), hjust = 0.5),
+            text = element_text(),
+            panel.background = element_rect(colour = NA),
+            plot.background = element_rect(colour = NA),
+            axis.title = element_text(face = "bold",size = rel(1)),
+            axis.title.y = element_text(angle=90,vjust =2),
+            axis.title.x = element_text(vjust = -0.2),
+            axis.text = element_text(),
+            axis.line = element_line(colour="black"),
+            axis.ticks = element_line(),
+            panel.grid.major = element_line(colour="#f0f0f0"),
+            panel.grid.minor = element_blank(),
+            legend.key = element_rect(colour = NA),
+            legend.position = "bottom",
+            legend.direction = "horizontal",
+            legend.key.size= unit(0.2, "cm"),
+            #    legend.margin = unit(0, "cm"),
+            legend.title = element_text(face="italic"),
+            plot.margin=unit(c(10,5,5,5),"mm"),
+            strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+            strip.text = element_text(face="bold"),
+            panel.border = element_rect(colour = "black")
+    ))
+
+}
+```
+
+
 ***
 
-## 1. Spatial distribution of LW residuals by species
+## 1. Spatial distribution of length by species
 Spatially-nested lmer() to explore spatial structuring of variation in body sizes
-Location nested within HUC12 nested within HUC8 nested within species
+HUC12 nested within HUC8 nested within Location
 
 ***
+```{r joy plots}
+ggplot(dat %>% filter(length < 700), aes(x = length, y = species)) +
+  geom_density_ridges() +
+  theme_publication()
+
+
+```
+
+
 
 ```{r spatially-nested lmer by species}
 
-
-
-mod0 <- lmer(log10Length ~ 1 + (1|Location/HUC12_NAME/HUC8_Name/species), data = dat)
-
-
-
-
 # build up hierarchical random effects for each species 
-## Hierarchical graphs for huc12/huc8/location 
+## Hierarchical graphs for huc8/huc12/location 
   lmerModel <- function(df) {
-    lmer(resid ~ 1 + (1|location/HUC8_Name/HUC12_NAME), data = df)
+    lmer(log10Length ~ 1 + (1|location/HUC8_Name/HUC12_NAME), data = df) 
   }
 
   reBySpecies <- function(mod, species){
@@ -171,11 +209,11 @@ mod0 <- lmer(log10Length ~ 1 + (1|Location/HUC12_NAME/HUC8_Name/species), data =
       geom_point(aes(condvalLoc, huc12, shape = factor(loc)), color = '#bdb2a8') +
       geom_vline(xintercept = 0) +
       scale_y_discrete(guide = guide_none(title = NULL)) +
-      scale_x_continuous("Residual from species-specific LW relationship") +
+      scale_x_continuous("Length log10") +
       ggtitle(species) +
       facet_wrap(~huc8)
-    
-    ggsave(paste0("D:/projects/ecoDrought/bodySize/All_Size_inputs/ecoDrought_conditionAnalysis/charts/hierResids_",species,".png"))
+      
+    ggsave(paste0("D:/projects/ecoDrought/bodySize/All_Size_inputs/ecoDrought_SizeAnalysis/charts/hierResids_",species,".png"))
     return(gg)
   }
   
@@ -201,7 +239,7 @@ mod0 <- lmer(log10Length ~ 1 + (1|Location/HUC12_NAME/HUC8_Name/species), data =
   
   ggSD <- ggplot(datBySpeciesRESD, aes(species,estimate, fill = group)) +
     geom_col(position = "dodge") +
-    scale_y_continuous("Standard deviation of nested LW residuals")
+    scale_y_continuous("Standard deviation of nested lengths")
   ggSD
   
   ## plot RE across species
@@ -214,7 +252,7 @@ mod0 <- lmer(log10Length ~ 1 + (1|Location/HUC12_NAME/HUC8_Name/species), data =
     geom_point(aes(condvalLoc8, species), color = '#3f7bc4', alpha = 0.2, position = position_nudge(y = -0.2)) +
     geom_point(aes(condvalLoc, species), color = 'black') +
     geom_vline(xintercept = 0) +
-    scale_x_continuous("Residual from species-specific LW relationship") +
+    scale_x_continuous("Length log10") +
     facet_wrap(~loc)
 
   # by huc8
@@ -229,7 +267,7 @@ mod0 <- lmer(log10Length ~ 1 + (1|Location/HUC12_NAME/HUC8_Name/species), data =
     geom_point(aes(condvalLoc8, species), color = '#3f7bc4', position = position_nudge(y = -0.2)) +
     geom_point(aes(condvalLoc, species), color = 'black') +
     geom_vline(xintercept = 0) +
-    scale_x_continuous("Residual from species-specific LW relationship") +
+    scale_x_continuous("Length log10") +
     facet_wrap(loc ~ huc8, labeller = labeller(.multi_line = FALSE))
   
 ##############################################################################  
@@ -238,7 +276,7 @@ mod0 <- lmer(log10Length ~ 1 + (1|Location/HUC12_NAME/HUC8_Name/species), data =
   ## Hierarchical graphs for huc12/huc8
   
   lmerModelNoLocation <- function(df) {
-    lmer(resid ~ 1 + (1|HUC8_Name/HUC12_NAME), data = df)
+    lmer(log10Length ~ 1 + (1|HUC8_Name/HUC12_NAME), data = df)
   }
   
   # build up hierarchical random effects for each species 
@@ -272,11 +310,11 @@ mod0 <- lmer(log10Length ~ 1 + (1|Location/HUC12_NAME/HUC8_Name/species), data =
       geom_point(aes(condval8, huc12), color = '#3f7bc4') +
       geom_vline(xintercept = 0) +
       scale_y_discrete(guide = guide_none(title = NULL)) +
-      scale_x_continuous("Residual from species-specific LW relationship") +
+      scale_x_continuous("Length") +
       ggtitle(species) +
       facet_wrap(~huc8)
     
-    ggsave(paste0("D:/projects/ecoDrought/bodySize/All_Size_inputs/ecoDrought_conditionAnalysis/charts/hierResids_",species,".png"))
+    ggsave(paste0("D:/projects/ecoDrought/bodySize/All_Size_inputs/ecoDrought_SizeAnalysis/charts/hierResids_",species,".png"))
     
     return(gg)
   }  
@@ -301,7 +339,7 @@ mod0 <- lmer(log10Length ~ 1 + (1|Location/HUC12_NAME/HUC8_Name/species), data =
   
   ggNoLocationSD <- ggplot(datBySpeciesRENoLocationSD, aes(species,estimate, fill = group)) +
     geom_col(position = "dodge") +
-    scale_y_continuous("Standard deviation of nested LW residuals") 
+    scale_y_continuous("Standard deviation of length") 
   ggNoLocationSD 
   
   ## plot RE across species
@@ -319,97 +357,10 @@ mod0 <- lmer(log10Length ~ 1 + (1|Location/HUC12_NAME/HUC8_Name/species), data =
     geom_point(color = '#ff9a36', alpha = 0.2, position = position_nudge(y = 0.2)) +
     geom_point(aes(condval8, species), color = '#3f7bc4', position = position_nudge(y = -0.2)) +
     geom_vline(xintercept = 0) +
-    scale_x_continuous("Residual from species-specific LW relationship") +
+    scale_x_continuous("Length") +
     facet_wrap( ~ huc8)
 
 ```
 
 
-***
-
-## 5. Residual means by waterbody
-Analyze means of residuals by waterbody. Speeds up lmer() and reduces df inflation from individual observations.
-Remove waterbodies with < 10 observations.
-Look in depth at lm() for Brook Trout
-
-***
-
-```{r means by waterbody}
-
-datByWB <- dat %>%
-  group_by(species, Lake, WATERBODY, location, HUC8_Name, HUC12_NAME, rdStd, rel_density,
-           sFStd, sTStd, daStd, Str_Order, KM_4th, KM_Lake) %>%
-  summarize(meanResid = mean(resid, na.rm = TRUE),
-            sdResid = sd(resid, na.rm = TRUE),
-            n = n(),
-            meanLength = mean(log10Length, na.rm = TRUE),
-            meanWeight = mean(log10Weight, na.rm = TRUE)) %>%
-  filter(n > 10) %>%
-  ungroup()
-
-## bkt deep dive
-datBKT <- datByWB %>% filter(species == "Rainbow Trout")
-
-b0 <- lmer(meanResid ~ 1 + (1|location/HUC8_Name), data = datBKT %>% filter(Lake == 0))
-b1 <- lmer(meanResid ~ 1 + rdStd + (1|location/HUC8_Name), data = datBKT %>% filter(Lake == 0))
-
-AIC(b0, b1) %>% arrange(AIC)
-tidy(b1)
-
-ggplot(datBKT %>% filter(Lake == 0), aes(rdStd, meanResid)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth(method = 'lm') +
-  facet_wrap(~location)
-
-# summerF, summerT, drain_area_km2, Str_Order, KM_4th,KM_Lake
-ggplot(datBKT %>% filter(Lake == 0, location == 'MT'), aes(rdStd, meanResid)) +
-  geom_point(aes(color = daStd)) +
-  geom_smooth(method = 'lm') +
-  scale_color_viridis_c() +
-  facet_wrap(~location)
-
-b2 <- lmer(meanResid ~ 1 + daStd + (1|location/HUC8_Name), data = datBKT %>% filter(Lake == 0))
-b3 <- lmer(meanResid ~ 1 + daStd * rdStd + (1|location/HUC8_Name), data = datBKT %>% filter(Lake == 0))
-
-AIC(b0, b1, b2, b3) %>% arrange(AIC)
-glance(b3)
-
-b4 <- lmer(meanResid ~ 1 + daStd * meanLength + (1|location/HUC8_Name), data = datBKT %>% filter(Lake == 0))
-AIC(b0, b1, b2, b3, b4) %>% arrange(AIC)
-
-# are the random effects sucking up all the variance? Try just lm() to see how var can get explained
-blm0 <- lm(meanResid ~ 1, data = datBKT %>% filter(Lake == 0))
-blm1 <- lm(meanResid ~ 1 + location, data = datBKT %>% filter(Lake == 0))
-blm2 <- lm(meanResid ~ 1 + rdStd * location, data = datBKT %>% filter(Lake == 0))
-blm3 <- lm(meanResid ~ 1 + daStd * location, data = datBKT %>% filter(Lake == 0))
-blm4 <- lm(meanResid ~ 1 + sFStd * location, data = datBKT %>% filter(Lake == 0))
-blm5 <- lm(meanResid ~ 1 + sTStd * location, data = datBKT %>% filter(Lake == 0))
-blm6 <- lm(meanResid ~ 1 + meanLength * location, data = datBKT %>% filter(Lake == 0))
-blm7 <- lm(meanResid ~ 1 + Str_Order * location, data = datBKT %>% filter(Lake == 0))
-blm8 <- lm(meanResid ~ 1 + KM_4th * location, data = datBKT %>% filter(Lake == 0))
-blm9 <- lm(meanResid ~ 1 + rdStd * daStd * location, data = datBKT %>% filter(Lake == 0))
-blm10 <- lm(meanResid ~ 1 + sFStd * sTStd * location, data = datBKT %>% filter(Lake == 0))
-blm11 <- lm(meanResid ~ 1 + meanLength * sFStd * location, data = datBKT %>% filter(Lake == 0))
-blm12 <- lm(meanResid ~ 1 + meanLength * sTStd * location, data = datBKT %>% filter(Lake == 0))
-blm13 <- lm(meanResid ~ 1 + meanLength * sFStd * sTStd * location, data = datBKT %>% filter(Lake == 0))
-blmMega <- lm(meanResid ~ 1 + meanLength * sFStd * sTStd * Str_Order * KM_4th * location * sFStd * sTStd, data = datBKT %>% filter(Lake == 0))
-
-AIC(blm0,blm1,blm2,blm3,blm4,blm5,blm6,blm7,blm8,blm9,blm10,blm11,blm12,blm13,blmMega) %>% arrange(AIC)
-glance(blm10)
-data.frame(tidy(blm10))
-glance(blm13)
-data.frame(tidy(blm13))
-glance(blmMega)
-
-ggplot(datBKT %>% filter(Lake == 0), aes(sFStd, meanResid)) +
-  geom_point(aes(color = sTStd)) +
-  geom_smooth(method = 'lm') +
-  scale_color_viridis_c() +
-  facet_wrap(~location)
-
-ggplot(datBKT %>% filter(Lake == 0, location == 'MT'), aes(sFStd, sTStd, z = meanResid)) +
-  geom_density2d() 
-
-
-```
 
