@@ -1,0 +1,480 @@
+---
+title: "Body size spatial analysis - Hierarchical joy plots"
+author: "Ben Letcher"
+date: "8/13/2020"
+output:
+  html_document:
+    code_folding: hide
+---
+
+***
+
+***
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy = TRUE, warning = FALSE, message = FALSE, fig.width = 12, fig.height = 10) #, cache = TRUE)
+```
+
+```{r load libraries, echo = FALSE, message = FALSE}
+library(tidyverse)
+library(lme4)
+library(broom)
+library(kableExtra)
+library(modelr)
+library(data.table)
+library(rlang)
+library(tidyfast)
+library(knitr)
+library(ggridges)
+```
+
+If newData, then will load raw files, parse, filter and save as 'dat'
+```{r newData}
+newData = FALSE
+date <- 'June4' #suffix for data subdirectory
+```
+
+
+Only need to run this with new data - data output as 'dat'
+```{r fetch data}
+if(newData) {
+
+  #bring in all of the fish size data
+  fish <- list.files(paste0("D:/projects/ecoDrought/bodySize/All_Size_inputs/Size_inputs_", date), pattern = "*.txt", full.names = T)
+  
+  txt_files_df <- lapply(fish, function(x) {read.table(file = x, header = T, sep =",")})
+  
+  all_fish <- do.call("rbind", lapply(txt_files_df, as.data.frame))
+  
+  ##bring in the covariate data
+  covs <- read.csv("D:/projects/ecoDrought/bodySize/All_Size_inputs/covariates_size_analysis.csv")
+  
+  #merge fish data with covariate data
+  all_fish_init<-merge(all_fish, covs, by = "RALLID")
+  
+  #Select only those fish of interest
+  
+  #species of interest    
+  sinc <- c("Bonneville Cutthroat Trout","Colorado River Cutthroat Trout","Redband Trout","Bull Trout","Brook Trout","Mountain Whitefish","Brown Trout","Westslope Cutthroat Trout", "Yellowstone Cutthroat Trout","Rainbow Trout")
+  
+  #exclude weir data
+  nw <- c("Lake","stream")
+  
+  dat0 <- all_fish_init %>%
+    filter(species %in% sinc, site_type %in% nw,
+           !is.na(Weight), Length > 75) %>%
+    rename(weight = Weight, length = Length) %>%
+    mutate(log10Weight = log10(weight), log10Length = log10(length))
+  
+  # Species-specific LWE regressions so we can add residuals to dataset
+  lwModel <- function(df) {
+    lm(log10Weight ~ log10Length, data = df)
+  }
+  
+  datBySpecies <- dat0 %>%
+    group_by(species) %>% 
+    nest() %>%
+    mutate(model = map(data, lwModel))
+           
+  datBySpecies <- datBySpecies %>% mutate(resids = map2(data, model, add_residuals))
+
+  dat <- dt_unnest(datBySpecies, resids) # unnest() from tidyverse is so slow it never finishes
+  
+  dat <- dat %>%
+    group_by(location) %>%
+    mutate(daStd = (log(drain_area_km2) - (mean(log(drain_area_km2)))) / sd(log(drain_area_km2)),
+           sFStd = (log(summerF) - (mean(log(summerF + 0.0001), na.rm=TRUE))) / sd(log(summerF + 0.0001), na.rm=TRUE),
+           sTStd = (log(summerT) - (mean(log(summerT), na.rm=TRUE))) / sd(log(summerT), na.rm=TRUE),
+           slopeStd = (SLOPE - mean(SLOPE)) / sd(SLOPE),
+           rdStd = (log(rel_density) - (mean(log(rel_density), na.rm=TRUE))) / sd(log(rel_density), na.rm=TRUE)) %>%
+    ungroup()
+  
+  dat$datePosix <- as.POSIXlt(strptime(dat$date, "%m/%d/%Y %H:%M:%S"))
+  dat$doy <- lubridate::yday(dat$datePosix)
+  
+  speciesList <- unique(dat$species)
+  
+  save(dat, sinc, file =paste0("D:/projects/ecoDrought/bodySize/All_Size_inputs/Size_inputs_", date,"/dat.R"))
+  
+  rm(all_fish_init, all_fish, dat0)
+}
+```
+
+```{r load data if no new data}
+if(!newData){
+  load(paste0("D:/projects/ecoDrought/bodySize/All_Size_inputs/Size_inputs_", date,"/dat.R"))
+  speciesList <- unique(dat$species)
+}
+```
+
+```{r new variables}
+
+dat <- dat %>%
+  mutate(strOrderLake = ifelse(Lake == 1, 'Lake', Str_Order))
+
+```
+
+```{r theme_publication}
+
+theme_publication <- function(base_size=14, base_family="") {
+  library(grid)
+  library(ggthemes)
+  (theme_foundation(base_size=base_size, base_family=base_family)
+    + theme(plot.title = element_text(face = "bold",
+                                      size = rel(1.2), hjust = 0.5),
+            text = element_text(),
+            panel.background = element_rect(colour = NA),
+            plot.background = element_rect(colour = NA),
+            axis.title = element_text(face = "bold",size = rel(1)),
+            axis.title.y = element_text(angle=90,vjust =2),
+            axis.title.x = element_text(vjust = -0.2),
+            axis.text = element_text(),
+            axis.line = element_line(colour="black"),
+            axis.ticks = element_line(),
+            panel.grid.major = element_line(colour="#f0f0f0"),
+            panel.grid.minor = element_blank(),
+            legend.key = element_rect(colour = NA),
+            legend.position = "bottom",
+            legend.direction = "horizontal",
+            legend.key.size= unit(0.2, "cm"),
+            #    legend.margin = unit(0, "cm"),
+            legend.title = element_text(face="italic"),
+            plot.margin=unit(c(10,5,5,5),"mm"),
+            strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+            strip.text = element_text(face="bold"),
+            panel.border = element_rect(colour = "black")
+    ))
+
+}
+```
+
+
+***
+## All fish by species
+***
+```{r joy plots}
+ggplot(dat %>% filter(length < 700), aes(x = length, y = species)
+       ) +
+  geom_density_ridges(
+    rel_min_height = 0.01, # cuts off trailing lines
+    scale = 1.75 # Amount of overlap among curves
+  ) +
+  theme_publication()
+
+# with tail probabilities, https://wilkelab.org/ggridges/articles/introduction.html
+ggplot(dat %>% filter(length < 700), aes(x = length, y = species, 
+                                         fill = 0.5 - abs(0.5 - stat(ecdf))
+                                         )
+       ) +
+  stat_density_ridges(
+    rel_min_height = 0.01, # cuts off trailing lines
+    scale = 1.75, # Amount of overlap among curves
+    geom = "density_ridges_gradient", 
+    calc_ecdf = TRUE,
+    #### simulate a rug #### Takes a long time and doesn't look good
+    # jittered_points = TRUE,
+    # position = position_points_jitter(width = 0.05, height = 0),
+    # point_shape = '|', point_size = 3, point_alpha = 1, alpha = 0.7
+    ########################
+  ) +
+  scale_fill_viridis_c(name = "Tail probability", direction = -1) +
+  theme_publication() +
+  theme(
+    legend.position = "right",
+    legend.direction = "vertical",
+    #legend.key.size= unit(0.2, "cm"),
+    # legend.margin = unit(0, "cm"),
+    legend.title = element_text(face="bold"),
+    axis.text.y = element_text(vjust = 0)
+  ) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") 
+```
+
+***
+## All fish by species and strOrderLake
+***
+```{r}
+
+
+# by strOrderLake
+ggplot(dat %>% filter(length < 700, !is.na(strOrderLake)), 
+         aes(x = length, y = factor(strOrderLake), 
+            fill = 0.5 - abs(0.5 - stat(ecdf))
+            )
+       ) +
+  stat_density_ridges(
+    rel_min_height = 0.01, # cuts off trailing lines
+    scale = 1.75, # Amount of overlap among curves
+    geom = "density_ridges_gradient", 
+    calc_ecdf = TRUE,
+    #### simulate a rug #### Takes a long time and doesn't look good
+    # jittered_points = TRUE,
+    # position = position_points_jitter(width = 0.05, height = 0),
+    # point_shape = '|', point_size = 3, point_alpha = 1, alpha = 0.7
+    ########################
+  ) +
+  scale_fill_viridis_c(name = "Tail probability", direction = -1) +
+  theme_publication() +
+  theme(
+    legend.position = "right",
+    legend.direction = "vertical",
+    #legend.key.size= unit(0.2, "cm"),
+    # legend.margin = unit(0, "cm"),
+    legend.title = element_text(face="bold"),
+    axis.text.y = element_text(vjust = 0)
+  ) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  facet_wrap(~species)
+```
+
+***
+## All fish by species, strOrderLake, and Location
+***
+```{r}
+
+# by strOrderLake and HUC8 and species
+ggplot(dat %>% filter(length < 700, 
+                      !is.na(strOrderLake), 
+                      #species == 'Brook Trout'
+                      ), 
+         aes(x = length, y = factor(strOrderLake), 
+            fill = 0.5 - abs(0.5 - stat(ecdf))
+            )
+       ) +
+  stat_density_ridges(
+    rel_min_height = 0.01, # cuts off trailing lines
+    scale = 1.75, # Amount of overlap among curves
+    geom = "density_ridges_gradient", 
+    calc_ecdf = TRUE,
+    #### simulate a rug #### Takes a long time and doesn't look good
+    # jittered_points = TRUE,
+    # position = position_points_jitter(width = 0.05, height = 0),
+    # point_shape = '|', point_size = 3, point_alpha = 1, alpha = 0.7
+    ########################
+  ) +
+  scale_fill_viridis_c(name = "Tail probability", direction = -1) +
+  theme_publication() +
+  theme(
+    legend.position = "right",
+    legend.direction = "vertical",
+    #legend.key.size= unit(0.2, "cm"),
+    # legend.margin = unit(0, "cm"),
+    legend.title = element_text(face="bold"),
+    axis.text.y = element_text(vjust = 0)
+  ) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  #facet_wrap(~ HUC8_Name)
+  facet_grid(Location ~ species)
+```
+
+***
+## Brook Trout by strOrderLake, and Location
+***
+```{r}
+# by strOrderLake and HUC8 for bkt
+ggplot(dat %>% filter(length < 700, 
+                      !is.na(strOrderLake), 
+                      species == 'Brook Trout'
+                      ), 
+         aes(x = length, y = factor(strOrderLake), 
+            fill = 0.5 - abs(0.5 - stat(ecdf))
+            )
+       ) +
+  stat_density_ridges(
+    rel_min_height = 0.01, # cuts off trailing lines
+    scale = 1.75, # Amount of overlap among curves
+    geom = "density_ridges_gradient", 
+    calc_ecdf = TRUE,
+    #### simulate a rug #### Takes a long time and doesn't look good
+    # jittered_points = TRUE,
+    # position = position_points_jitter(width = 0.05, height = 0),
+    # point_shape = '|', point_size = 3, point_alpha = 1, alpha = 0.7
+    ########################
+  ) +
+  scale_fill_viridis_c(name = "Tail probability", direction = -1) +
+  theme_publication() +
+  theme(
+    legend.position = "right",
+    legend.direction = "vertical",
+    #legend.key.size= unit(0.2, "cm"),
+    # legend.margin = unit(0, "cm"),
+    legend.title = element_text(face="bold"),
+    axis.text.y = element_text(vjust = 0)
+  ) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  facet_wrap(~ Location)
+  #facet_grid(Location ~ species)
+
+```
+
+***
+## Brown Trout by strOrderLake, and Location
+***
+```{r}
+# by strOrderLake and HUC8 for bkt
+ggplot(dat %>% filter(length < 700, 
+                      !is.na(strOrderLake), 
+                      species == 'Brown Trout'
+                      ), 
+         aes(x = length, y = factor(strOrderLake), 
+            fill = 0.5 - abs(0.5 - stat(ecdf))
+            )
+       ) +
+  stat_density_ridges(
+    rel_min_height = 0.01, # cuts off trailing lines
+    scale = 1.75, # Amount of overlap among curves
+    geom = "density_ridges_gradient", 
+    calc_ecdf = TRUE,
+    #### simulate a rug #### Takes a long time and doesn't look good
+    # jittered_points = TRUE,
+    # position = position_points_jitter(width = 0.05, height = 0),
+    # point_shape = '|', point_size = 3, point_alpha = 1, alpha = 0.7
+    ########################
+  ) +
+  scale_fill_viridis_c(name = "Tail probability", direction = -1) +
+  theme_publication() +
+  theme(
+    legend.position = "right",
+    legend.direction = "vertical",
+    #legend.key.size= unit(0.2, "cm"),
+    # legend.margin = unit(0, "cm"),
+    legend.title = element_text(face="bold"),
+    axis.text.y = element_text(vjust = 0)
+  ) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  facet_wrap(~ Location)
+  #facet_grid(Location ~ species)
+
+```
+
+***
+## Rainbow Trout by strOrderLake, and Location
+***
+```{r}
+# by strOrderLake and HUC8 for bkt
+ggplot(dat %>% filter(length < 700, 
+                      !is.na(strOrderLake), 
+                      species == 'Rainbow Trout'
+                      ), 
+         aes(x = length, y = factor(strOrderLake), 
+            fill = 0.5 - abs(0.5 - stat(ecdf))
+            )
+       ) +
+  stat_density_ridges(
+    rel_min_height = 0.01, # cuts off trailing lines
+    scale = 1.75, # Amount of overlap among curves
+    geom = "density_ridges_gradient", 
+    calc_ecdf = TRUE,
+    #### simulate a rug #### Takes a long time and doesn't look good
+    # jittered_points = TRUE,
+    # position = position_points_jitter(width = 0.05, height = 0),
+    # point_shape = '|', point_size = 3, point_alpha = 1, alpha = 0.7
+    ########################
+  ) +
+  scale_fill_viridis_c(name = "Tail probability", direction = -1) +
+  theme_publication() +
+  theme(
+    legend.position = "right",
+    legend.direction = "vertical",
+    #legend.key.size= unit(0.2, "cm"),
+    # legend.margin = unit(0, "cm"),
+    legend.title = element_text(face="bold"),
+    axis.text.y = element_text(vjust = 0)
+  ) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  facet_wrap(~ Location)
+  #facet_grid(Location ~ species)
+
+```
+
+# Location by species
+```{r}
+
+ggplot(dat %>% filter(length < 700, 
+                      !is.na(strOrderLake), 
+                      #species == 'Brook Trout'
+                      ), 
+         aes(x = length, y = Location, 
+            fill = 0.5 - abs(0.5 - stat(ecdf))
+            )
+       ) +
+  stat_density_ridges(
+    rel_min_height = 0.01, # cuts off trailing lines
+    scale = 1.75, # Amount of overlap among curves
+    geom = "density_ridges_gradient", 
+    calc_ecdf = TRUE,
+    #### simulate a rug #### Takes a long time and doesn't look good
+    # jittered_points = TRUE,
+    # position = position_points_jitter(width = 0.05, height = 0),
+    # point_shape = '|', point_size = 3, point_alpha = 1, alpha = 0.7
+    ########################
+  ) +
+  scale_fill_viridis_c(name = "Tail probability", direction = -1) +
+  theme_publication() +
+  theme(
+    legend.position = "right",
+    legend.direction = "vertical",
+    #legend.key.size= unit(0.2, "cm"),
+    # legend.margin = unit(0, "cm"),
+    legend.title = element_text(face="bold"),
+    axis.text.y = element_text(vjust = 0)
+  ) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  facet_wrap(~ species)
+  
+```
+
+# Huc12 by Location for bkt - doesn't really work
+```{r}
+
+ggplot(dat %>% filter(length < 700, 
+                      !is.na(strOrderLake), 
+                      species == 'Brook Trout'
+                      ), 
+         aes(x = length, y = HUC8_Name, 
+            fill = 0.5 - abs(0.5 - stat(ecdf))
+            )
+       ) +
+  stat_density_ridges(
+    rel_min_height = 0.01, # cuts off trailing lines
+    scale = 1.75, # Amount of overlap among curves
+    geom = "density_ridges_gradient", 
+    calc_ecdf = TRUE,
+    #### simulate a rug #### Takes a long time and doesn't look good
+    # jittered_points = TRUE,
+    # position = position_points_jitter(width = 0.05, height = 0),
+    # point_shape = '|', point_size = 3, point_alpha = 1, alpha = 0.7
+    ########################
+  ) +
+  scale_fill_viridis_c(name = "Tail probability", direction = -1) +
+  theme_publication() +
+  theme(
+    legend.position = "right",
+    legend.direction = "vertical",
+    #legend.key.size= unit(0.2, "cm"),
+    # legend.margin = unit(0, "cm"),
+    legend.title = element_text(face="bold"),
+    axis.text.y = element_text(vjust = 0)
+  ) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  facet_wrap(~ Location)
+  #facet_grid(Location ~ species)
+
+
+```
